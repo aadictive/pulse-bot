@@ -1,0 +1,49 @@
+# Environment Variables (SECRETS!)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Python garbage
+__pycache__/
+*.py[cod]
+.Python
+venv/
+ENV/
+env/
+.venv
+
+# Lambda packaging
+lambdas/package/
+lambdas/*.zip
+lambda_function.zip
+package.zip
+
+# Testing
+.pytest_cache/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Secrets & Credentials
+secrets/
+*.secret
+*.enc
+tokens.json
+credentials.json
+
+# Build
+dist/
+build/
+*.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db
