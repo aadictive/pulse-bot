@@ -1,0 +1,15 @@
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "pulse-bot-dev"
+
+[default.build.parameters]
+use_container = false   # set to true if you have Docker installed
+
+[default.deploy.parameters]
+capabilities        = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+confirm_changeset   = false
+fail_on_empty_changeset = false
+region              = "us-east-1"
+parameter_overrides = "Stage=dev"

@@ -1,0 +1,62 @@
+"""
+Webex API service — thin wrapper around the Webex REST API.
+"""
+
+import logging
+
+import requests
+
+logger = logging.getLogger(__name__)
+
+WEBEX_API = "https://webexapis.com/v1"
+
+
+def _headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def get_message_details(message_id: str, token: str) -> dict | None:
+    """Fetch the full message object (webhook payload only has metadata)."""
+    try:
+        resp = requests.get(
+            f"{WEBEX_API}/messages/{message_id}",
+            headers=_headers(token),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logger.exception("Failed to fetch message %s: %s", message_id, exc)
+        return None
+
+
+def send_message(room_id: str, text: str, token: str) -> bool:
+    """Post a markdown message to a Webex space."""
+    try:
+        resp = requests.post(
+            f"{WEBEX_API}/messages",
+            headers=_headers(token),
+            json={"roomId": room_id, "markdown": text},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.exception("Failed to send message to room %s: %s", room_id, exc)
+        return False
+
+
+def get_display_name(person_id: str, token: str) -> str:
+    """Look up a person's display name by their Webex person ID."""
+    try:
+        resp = requests.get(
+            f"{WEBEX_API}/people/{person_id}",
+            headers=_headers(token),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("displayName") or data.get("firstName", person_id)
+    except Exception as exc:
+        logger.exception("Failed to get display name for %s: %s", person_id, exc)
+        return person_id   # fallback to raw ID
