@@ -157,6 +157,9 @@ def _admin_mentions(config: dict) -> str:
     return " ".join(
         f"<@personId:{pid}>" for pid in config.get("admin_person_ids", [])
     )
+
+
+def _post_scores(room_id: str, config: dict) -> None:
     """Fetch current month's scores and post a mini leaderboard to the space."""
     period = date.today().strftime("%Y-%m")
     month_name = date.today().strftime("%B %Y")
