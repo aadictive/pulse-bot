@@ -1,0 +1,66 @@
+name: Deploy Pulse Bot
+
+on:
+  push:
+    branches:
+      - develop   # auto-deploy on every push to develop
+
+env:
+  AWS_REGION: us-east-1
+  SAM_STACK_NAME: pulse-bot-dev
+
+jobs:
+  deploy:
+    name: Build & Deploy to AWS Lambda
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Check out code ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ─────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── 3. Configure AWS credentials (stored as GitHub Secrets) ──────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ── 4. Install SAM CLI ───────────────────────────────────────────────
+      - name: Install SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      # ── 5. Build Lambda package ──────────────────────────────────────────
+      - name: SAM Build
+        run: sam build --use-container
+
+      # ── 6. Deploy to AWS ─────────────────────────────────────────────────
+      - name: SAM Deploy
+        run: |
+          sam deploy \
+            --stack-name ${{ env.SAM_STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --parameter-overrides Stage=dev \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --s3-bucket pulse-bot-sam-artifacts-${{ secrets.AWS_ACCOUNT_ID }} \
+            --s3-prefix pulse-bot
+
+      # ── 7. Print the webhook URL ─────────────────────────────────────────
+      - name: Print Webhook URL
+        run: |
+          echo "✅ Deploy complete!"
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.SAM_STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='WebhookUrl'].OutputValue" \
+            --output text

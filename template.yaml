@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Pulse Bot - Webex points tracking bot
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: python3.12
+    Environment:
+      Variables:
+        POWERTOOLS_SERVICE_NAME: pulse-bot
+        LOG_LEVEL: INFO
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+
+Resources:
+
+  # ─── DynamoDB Table ───────────────────────────────────────────────────────
+  ScoresTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub pulse-bot-scores-${Stage}
+      BillingMode: PAY_PER_REQUEST   # pay only for what you use — very cheap
+      AttributeDefinitions:
+        - AttributeName: pk          # e.g. "2026-04" (year-month)
+          AttributeType: S
+        - AttributeName: sk          # e.g. "user#Aditya"
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ─── IAM Role for Lambda ──────────────────────────────────────────────────
+  PulseBotFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub pulse-bot-role-${Stage}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PulseBotPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt ScoresTable.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pulse-bot/*
+
+  # ─── Lambda: Webhook handler (called by Webex) ────────────────────────────
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub pulse-bot-webhook-${Stage}
+      CodeUri: src/
+      Handler: handlers/webhook.lambda_handler
+      Role: !GetAtt PulseBotFunctionRole.Arn
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+          SCORES_TABLE: !Sub pulse-bot-scores-${Stage}
+      Events:
+        WebhookPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PulseBotApi
+            Path: /webhook
+            Method: POST
+
+  # ─── Lambda: Monthly leaderboard (runs on a schedule) ─────────────────────
+  LeaderboardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub pulse-bot-leaderboard-${Stage}
+      CodeUri: src/
+      Handler: handlers/leaderboard.lambda_handler
+      Role: !GetAtt PulseBotFunctionRole.Arn
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+          SCORES_TABLE: !Sub pulse-bot-scores-${Stage}
+      Events:
+        MonthlySchedule:
+          Type: Schedule
+          Properties:
+            # Runs at 9am UTC on the 1st of every month
+            Schedule: cron(0 9 1 * ? *)
+            Description: Post monthly leaderboard and pick raffle winner
+
+  # ─── API Gateway ──────────────────────────────────────────────────────────
+  PulseBotApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub pulse-bot-api-${Stage}
+      StageName: !Ref Stage
+      # Only allow POST /webhook — no browsing
+      DefinitionBody:
+        openapi: '3.0'
+        info:
+          title: Pulse Bot API
+          version: '1.0'
+        paths:
+          /webhook:
+            post:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebhookFunction.Arn}/invocations
+
+Outputs:
+  WebhookUrl:
+    Description: "Paste this URL into your Webex Bot webhook settings"
+    Value: !Sub "https://${PulseBotApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/webhook"
+
+  ScoresTableName:
+    Description: "DynamoDB table name"
+    Value: !Ref ScoresTable
