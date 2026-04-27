@@ -32,6 +32,7 @@ def get_config() -> dict:
         "/pulse-bot/bot_token",
         "/pulse-bot/bot_person_id",
         "/pulse-bot/allowed_space_ids",
+        "/pulse-bot/admin_person_ids",
     ]
 
     try:
@@ -48,6 +49,11 @@ def get_config() -> dict:
     # Convert comma-separated space IDs into a list
     result["allowed_space_ids"] = [
         s.strip() for s in result.get("allowed_space_ids", "").split(",") if s.strip()
+    ]
+
+    # Convert comma-separated admin person IDs into a list
+    result["admin_person_ids"] = [
+        s.strip() for s in result.get("admin_person_ids", "").split(",") if s.strip()
     ]
 
     _cache = result
