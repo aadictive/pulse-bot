@@ -31,17 +31,18 @@ def award_point(
     recipient_person_id: str,
     room_id: str,
     table_name: str,
+    override_date: str = None,   # admin-only: "YYYY-MM-DD"
 ) -> dict:
     """
-    Give recipient_person_id 1 point for today.
+    Give recipient_person_id 1 point.
     Rules:
       - A person cannot give points to themselves.
-      - Only 1 point per recipient per day (regardless of who gives it).
+      - Only 1 point per recipient per day (unless override_date is provided by admin).
     Returns a dict with a human-readable 'message'.
     """
-    today = date.today()
-    period = today.strftime("%Y-%m")
-    today_str = today.isoformat()
+    target_date = date.fromisoformat(override_date) if override_date else date.today()
+    period = target_date.strftime("%Y-%m")
+    target_str = target_date.isoformat()
 
     # ── Rule: no self-points ──────────────────────────────────────────────────
     if giver_person_id == recipient_person_id:
@@ -56,8 +57,8 @@ def award_point(
         logger.exception("DynamoDB get_item failed: %s", exc)
         return {"success": False, "message": "⚠️ Something went wrong. Try again later."}
 
-    # ── Rule: only 1 point per person per day ─────────────────────────────────
-    if existing and existing.get("last_given") == today_str:
+    # ── Rule: only 1 point per person per day (skip if admin override) ───────
+    if not override_date and existing and existing.get("last_given") == target_str:
         current = existing.get("points", 0)
         return {
             "success": False,
@@ -68,7 +69,7 @@ def award_point(
         }
 
     # TTL: keep data for 13 months then auto-delete
-    import calendar, time as _time
+    import time as _time
     ttl = int(_time.time()) + (13 * 30 * 24 * 60 * 60)
 
     try:
@@ -84,7 +85,7 @@ def award_point(
             ExpressionAttributeValues={
                 ":zero": 0,
                 ":one": 1,
-                ":today": today_str,
+                ":today": target_str,
                 ":pid": recipient_person_id,
                 ":ttl": ttl,
             },
@@ -95,10 +96,57 @@ def award_point(
         return {"success": False, "message": "⚠️ Something went wrong. Try again later."}
 
     new_total = response["Attributes"].get("points", 1)
+    date_note = f" _(backdated to {target_str})_" if override_date else ""
     return {
         "success": True,
         "message": (
-            f"⭐ <@personId:{recipient_person_id}> just got a point! "
+            f"⭐ <@personId:{recipient_person_id}> just got a point{date_note}! "
+            f"They now have **{new_total}** point{'s' if new_total != 1 else ''} this month."
+        ),
+    }
+
+
+def remove_point(recipient_person_id: str, table_name: str) -> dict:
+    """
+    Remove 1 point from recipient for the current month. Admin-only.
+    Points floor at 0 — cannot go negative.
+    """
+    period = date.today().strftime("%Y-%m")
+    table = _table(table_name)
+    sk = f"user#{recipient_person_id}"
+
+    try:
+        existing = table.get_item(Key={"pk": period, "sk": sk}).get("Item")
+    except ClientError as exc:
+        logger.exception("DynamoDB get_item failed: %s", exc)
+        return {"success": False, "message": "⚠️ Something went wrong. Try again later."}
+
+    current = int(existing.get("points", 0)) if existing else 0
+    if current <= 0:
+        return {
+            "success": False,
+            "message": f"<@personId:{recipient_person_id}> has no points to remove this month.",
+        }
+
+    try:
+        response = table.update_item(
+            Key={"pk": period, "sk": sk},
+            UpdateExpression="SET points = points - :one",
+            ConditionExpression="points > :zero",
+            ExpressionAttributeValues={":one": 1, ":zero": 0},
+            ReturnValues="ALL_NEW",
+        )
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        return {"success": False, "message": "⚠️ Points are already at 0."}
+    except ClientError as exc:
+        logger.exception("DynamoDB update_item failed: %s", exc)
+        return {"success": False, "message": "⚠️ Something went wrong. Try again later."}
+
+    new_total = int(response["Attributes"].get("points", 0))
+    return {
+        "success": True,
+        "message": (
+            f"↩️ 1 point removed from <@personId:{recipient_person_id}>. "
             f"They now have **{new_total}** point{'s' if new_total != 1 else ''} this month."
         ),
     }
