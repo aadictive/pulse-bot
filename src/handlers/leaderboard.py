@@ -22,8 +22,18 @@ def lambda_handler(event, context):
 
     today = date.today()
     year, month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
-    period = f"{year}-{month:02d}"
-    month_name = date(year, month, 1).strftime("%B %Y")
+    default_period = f"{year}-{month:02d}"
+
+    # Allow manual invocation with a specific period e.g. {"period": "2026-04"}
+    period = event.get("period", default_period)
+
+    try:
+        p_year, p_month = map(int, period.split("-"))
+        month_name = date(p_year, p_month, 1).strftime("%B %Y")
+    except (ValueError, TypeError):
+        logger.error("Invalid period format: %s — expected YYYY-MM", period)
+        return {"status": "error", "reason": "invalid period, use YYYY-MM"}
+
     logger.info("Generating leaderboard for %s", period)
 
     scores = get_monthly_scores(period, os.environ["SCORES_TABLE"])
