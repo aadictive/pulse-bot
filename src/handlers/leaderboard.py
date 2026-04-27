@@ -69,8 +69,7 @@ def lambda_handler(event, context):
     save_raffle_winner(winner_id, period, os.environ["SCORES_TABLE"])
 
     if last_winner_id and last_winner_id != winner_id:
-        last_winner_name = get_display_name(last_winner_id, config["bot_token"])
-        lines.append(f"\n_({last_winner_name} was excluded from this month's raffle as last month's winner)_")
+        pass  # exclusion is silent — logic still applies, no public announcement
 
     lines.append(f"\n🎉 **Raffle Winner: {winner_name}!** 🎊")
     lines.append("_Winner chosen by weighted random draw — more points = more tickets!_")
