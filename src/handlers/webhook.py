@@ -94,7 +94,11 @@ def lambda_handler(event, context):
         # ── remove command: "@Pulse @Name --" (admin only) ───────────────────
         if "--" in clean_text:
             if not is_admin:
-                send_message(room_id, "🚫 Only admins can remove points.", config["bot_token"])
+                send_message(
+                    room_id,
+                    f"🚫 Only admins can remove points. Ask {_admin_mentions(config)}",
+                    config["bot_token"],
+                )
                 return _ok("unauthorised remove")
             responses = []
             for person_id in recipients:
@@ -111,7 +115,11 @@ def lambda_handler(event, context):
         override_date = None
         if date_match:
             if not is_admin:
-                send_message(room_id, "🚫 Only admins can backdate points.", config["bot_token"])
+                send_message(
+                    room_id,
+                    f"🚫 Only admins can backdate points. Ask {_admin_mentions(config)}",
+                    config["bot_token"],
+                )
                 return _ok("unauthorised backdate")
             try:
                 parsed = date.fromisoformat(date_match.group(1))
@@ -144,7 +152,11 @@ def lambda_handler(event, context):
         return _ok("internal error")
 
 
-def _post_scores(room_id: str, config: dict) -> None:
+def _admin_mentions(config: dict) -> str:
+    """Return a string that tags all admins e.g. '<@personId:X> <@personId:Y>'."""
+    return " ".join(
+        f"<@personId:{pid}>" for pid in config.get("admin_person_ids", [])
+    )
     """Fetch current month's scores and post a mini leaderboard to the space."""
     period = date.today().strftime("%Y-%m")
     month_name = date.today().strftime("%B %Y")
