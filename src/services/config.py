@@ -11,19 +11,22 @@ Parameters stored in AWS SSM (under /pulse-bot/):
 import json
 import logging
 import os
+import time
 
 import boto3
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
-_cache: dict = {}   # module-level cache so we only call SSM once per Lambda warm start
+_cache: dict = {}
+_cache_loaded_at: float = 0
+_CACHE_TTL_SECONDS = 300   # refresh SSM config every 5 minutes
 
 
 def get_config() -> dict:
     """Return bot config loaded from AWS Parameter Store."""
-    global _cache
-    if _cache:
+    global _cache, _cache_loaded_at
+    if _cache and (time.time() - _cache_loaded_at) < _CACHE_TTL_SECONDS:
         return _cache
 
     ssm = boto3.client("ssm", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -57,5 +60,6 @@ def get_config() -> dict:
     ]
 
     _cache = result
+    _cache_loaded_at = time.time()
     logger.info("Config loaded from SSM. Allowed spaces: %d", len(result["allowed_space_ids"]))
     return _cache
