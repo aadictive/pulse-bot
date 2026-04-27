@@ -12,8 +12,8 @@ import re
 import boto3
 
 from services.config import get_config
-from services.points import award_point
-from services.webex import get_message_details, send_message
+from services.points import award_point, get_monthly_scores
+from services.webex import get_display_name, get_message_details, send_message
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
@@ -58,15 +58,31 @@ def lambda_handler(event, context):
         if sender_person_id == bot_person_id:
             return _ok("bot's own message")
 
+        # ── Check for !scores command: "@Pulse !scores" ───────────────────────
+        clean_text = text.strip()
+        if "!scores" in clean_text.lower():
+            _post_scores(room_id, config)
+            return _ok("scores posted")
+
+        if "!help" in clean_text.lower():
+            send_message(
+                room_id,
+                "👋 **Pulse Bot Help**\n\n"
+                "• **@Pulse @Name** — give someone 1 point\n"
+                "• **@Pulse !scores** — see this month's leaderboard\n\n"
+                "_Rules: 1 point per person per day. No self-points!_",
+                config["bot_token"],
+            )
+            return _ok("help posted")
+
         # ── Parse: "@Pulse @SomeName" ─────────────────────────────────────────
-        # mentionedPeople contains person IDs; we also parse display names from text
         # Remove the bot's own mention, then award points to everyone else mentioned
         recipients = [pid for pid in mentioned_people if pid != bot_person_id]
 
         if not recipients:
             send_message(
                 room_id,
-                "👋 Mention someone to give them a point! e.g. **@Pulse @Aditya**",
+                "👋 Mention someone to give them a point! e.g. **@Pulse @Aditya**\nType **@Pulse !help** for all commands.",
                 config["bot_token"],
             )
             return _ok("no recipients")
@@ -92,6 +108,28 @@ def lambda_handler(event, context):
         logger.exception("Unhandled error in webhook handler: %s", exc)
         # Always return 200 to Webex — otherwise it retries forever
         return _ok("internal error")
+
+
+def _post_scores(room_id: str, config: dict) -> None:
+    """Fetch current month's scores and post a mini leaderboard to the space."""
+    from datetime import date
+    period = date.today().strftime("%Y-%m")
+    month_name = date.today().strftime("%B %Y")
+    scores = get_monthly_scores(period, os.environ["SCORES_TABLE"])
+
+    if not scores:
+        send_message(room_id, f"📊 No points awarded yet in {month_name}!", config["bot_token"])
+        return
+
+    scores.sort(key=lambda x: x["points"], reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [f"📊 **Pulse Scores — {month_name}**\n"]
+    for i, entry in enumerate(scores):
+        name = get_display_name(entry["person_id"], config["bot_token"])
+        medal = medals[i] if i < 3 else f"{i + 1}."
+        lines.append(f"{medal} **{name}** — {entry['points']} point{'s' if entry['points'] != 1 else ''}")
+
+    send_message(room_id, "\n".join(lines), config["bot_token"])
 
 
 def _ok(reason: str) -> dict:
