@@ -18,7 +18,7 @@ import re
 from datetime import date, datetime
 
 from services.config import get_config
-from services.points import award_point, get_monthly_scores, remove_point
+from services.points import award_point, get_monthly_scores, get_person_score, remove_point
 from services.webex import get_display_name, get_message_details, send_message
 
 logger = logging.getLogger()
@@ -69,6 +69,15 @@ def lambda_handler(event, context):
         clean_text = text.strip()
         is_admin = sender_person_id in config.get("admin_person_ids", [])
 
+        # ── score command: "@Pulse score me" or "@Pulse score @Name" ─────────
+        # Checked before `scores` to avoid prefix match collision
+        if re.search(r"\bscore\b", clean_text, re.IGNORECASE) and not re.search(r"\bscores\b", clean_text, re.IGNORECASE):
+            other_recipients = [pid for pid in mentioned_people if pid != bot_person_id]
+            lookup_id = other_recipients[0] if other_recipients else sender_person_id
+            is_self = lookup_id == sender_person_id
+            _post_person_score(room_id, lookup_id, is_self, config)
+            return _ok("person score posted")
+
         # ── scores command: "@Pulse scores" ──────────────────────────────────
         if re.search(r"\bscores\b", clean_text, re.IGNORECASE):
             _post_scores(room_id, config)
@@ -91,7 +100,7 @@ def lambda_handler(event, context):
             )
             return _ok("no recipients")
 
-        # ── remove command: "@Pulse @Name --" (admin only) ───────────────────
+        # ── remove command: "@Pulse @Name --" or "@Pulse @Name -- 2026-03-15" (admin only)
         if "--" in clean_text:
             if not is_admin:
                 send_message(
@@ -100,11 +109,27 @@ def lambda_handler(event, context):
                     config["bot_token"],
                 )
                 return _ok("unauthorised remove")
+
+            # Check if a specific date was also provided for backdated removal
+            remove_date = None
+            date_match = _DATE_RE.search(clean_text)
+            if date_match:
+                try:
+                    parsed = date.fromisoformat(date_match.group(1))
+                    if parsed > date.today():
+                        send_message(room_id, "🚫 Cannot remove points for a future date.", config["bot_token"])
+                        return _ok("future date rejected")
+                    remove_date = parsed.isoformat()
+                except ValueError:
+                    send_message(room_id, "⚠️ Invalid date format. Use YYYY-MM-DD.", config["bot_token"])
+                    return _ok("invalid date")
+
             responses = []
             for person_id in recipients:
                 result = remove_point(
                     recipient_person_id=person_id,
                     table_name=os.environ["SCORES_TABLE"],
+                    override_date=remove_date,
                 )
                 responses.append(result)
             send_message(room_id, "\n".join(r["message"] for r in responses), config["bot_token"])
@@ -152,11 +177,27 @@ def lambda_handler(event, context):
         return _ok("internal error")
 
 
+def _post_person_score(room_id: str, person_id: str, is_self: bool, config: dict) -> None:
+    """Post the current month's score for a single person."""
+    month_name = date.today().strftime("%B %Y")
+    points = get_person_score(person_id, os.environ["SCORES_TABLE"])
+    name = get_display_name(person_id, config["bot_token"])
+    subject = "You have" if is_self else f"**{name}** has"
+    send_message(
+        room_id,
+        f"📊 {subject} **{points}** point{'s' if points != 1 else ''} in {month_name}.",
+        config["bot_token"],
+    )
+
+
 def _admin_mentions(config: dict) -> str:
     """Return a string that tags all admins e.g. '<@personId:X> <@personId:Y>'."""
     return " ".join(
         f"<@personId:{pid}>" for pid in config.get("admin_person_ids", [])
     )
+
+
+def _post_scores(room_id: str, config: dict) -> None:
     """Fetch current month's scores and post a mini leaderboard to the space."""
     period = date.today().strftime("%Y-%m")
     month_name = date.today().strftime("%B %Y")
@@ -182,13 +223,16 @@ def _post_help(room_id: str, config: dict, is_admin: bool) -> None:
     lines = [
         "👋 **Pulse Bot Commands**\n",
         "• **@Pulse @Name** — give someone 1 point _(1 per person per day)_",
-        "• **@Pulse scores** — see this month's leaderboard",
+        "• **@Pulse score me** — see your own score this month",
+        "• **@Pulse score @Name** — see someone else's score",
+        "• **@Pulse scores** — see the full leaderboard",
         "• **@Pulse help** — show this message",
         "\n_Rules: No self-points. Leaderboard + raffle posted automatically on the 1st of each month._",
     ]
     if is_admin:
         lines.insert(-1, "\n🔧 **Admin Commands**")
-        lines.insert(-1, "• **@Pulse @Name --** — remove 1 point from someone")
+        lines.insert(-1, "• **@Pulse @Name --** — remove 1 point from someone (current month)")
+        lines.insert(-1, "• **@Pulse @Name -- 2026-03-15** — remove a point from a specific month")
         lines.insert(-1, "• **@Pulse @Name 2026-04-26** — backdate a point to a specific date")
 
     send_message(room_id, "\n".join(lines), config["bot_token"])
