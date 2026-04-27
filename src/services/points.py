@@ -156,6 +156,18 @@ def remove_point(recipient_person_id: str, table_name: str, override_date: str =
     }
 
 
+def get_person_score(person_id: str, table_name: str) -> int:
+    """Return the current month's point total for a single person. Returns 0 if not found."""
+    period = date.today().strftime("%Y-%m")
+    table = _table(table_name)
+    try:
+        item = table.get_item(Key={"pk": period, "sk": f"user#{person_id}"}).get("Item")
+        return int(item.get("points", 0)) if item else 0
+    except ClientError as exc:
+        logger.exception("DynamoDB get_item failed: %s", exc)
+        return 0
+
+
 def get_monthly_scores(period: str, table_name: str) -> list:
     """
     Return all scores for a given month period (e.g. '2026-04').
