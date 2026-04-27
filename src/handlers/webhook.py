@@ -91,7 +91,7 @@ def lambda_handler(event, context):
             )
             return _ok("no recipients")
 
-        # ── remove command: "@Pulse @Name --" (admin only) ───────────────────
+        # ── remove command: "@Pulse @Name --" or "@Pulse @Name -- 2026-03-15" (admin only)
         if "--" in clean_text:
             if not is_admin:
                 send_message(
@@ -100,11 +100,27 @@ def lambda_handler(event, context):
                     config["bot_token"],
                 )
                 return _ok("unauthorised remove")
+
+            # Check if a specific date was also provided for backdated removal
+            remove_date = None
+            date_match = _DATE_RE.search(clean_text)
+            if date_match:
+                try:
+                    parsed = date.fromisoformat(date_match.group(1))
+                    if parsed > date.today():
+                        send_message(room_id, "🚫 Cannot remove points for a future date.", config["bot_token"])
+                        return _ok("future date rejected")
+                    remove_date = parsed.isoformat()
+                except ValueError:
+                    send_message(room_id, "⚠️ Invalid date format. Use YYYY-MM-DD.", config["bot_token"])
+                    return _ok("invalid date")
+
             responses = []
             for person_id in recipients:
                 result = remove_point(
                     recipient_person_id=person_id,
                     table_name=os.environ["SCORES_TABLE"],
+                    override_date=remove_date,
                 )
                 responses.append(result)
             send_message(room_id, "\n".join(r["message"] for r in responses), config["bot_token"])
@@ -191,7 +207,8 @@ def _post_help(room_id: str, config: dict, is_admin: bool) -> None:
     ]
     if is_admin:
         lines.insert(-1, "\n🔧 **Admin Commands**")
-        lines.insert(-1, "• **@Pulse @Name --** — remove 1 point from someone")
+        lines.insert(-1, "• **@Pulse @Name --** — remove 1 point from someone (current month)")
+        lines.insert(-1, "• **@Pulse @Name -- 2026-03-15** — remove a point from a specific month")
         lines.insert(-1, "• **@Pulse @Name 2026-04-26** — backdate a point to a specific date")
 
     send_message(room_id, "\n".join(lines), config["bot_token"])

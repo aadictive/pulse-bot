@@ -106,12 +106,15 @@ def award_point(
     }
 
 
-def remove_point(recipient_person_id: str, table_name: str) -> dict:
+def remove_point(recipient_person_id: str, table_name: str, override_date: str = None) -> dict:
     """
-    Remove 1 point from recipient for the current month. Admin-only.
+    Remove 1 point from recipient. Admin-only.
+    If override_date (YYYY-MM-DD) is given, removes from that month instead of current.
     Points floor at 0 — cannot go negative.
     """
-    period = date.today().strftime("%Y-%m")
+    target_date = date.fromisoformat(override_date) if override_date else date.today()
+    period = target_date.strftime("%Y-%m")
+    period_label = target_date.strftime("%B %Y")
     table = _table(table_name)
     sk = f"user#{recipient_person_id}"
 
@@ -125,7 +128,7 @@ def remove_point(recipient_person_id: str, table_name: str) -> dict:
     if current <= 0:
         return {
             "success": False,
-            "message": f"<@personId:{recipient_person_id}> has no points to remove this month.",
+            "message": f"<@personId:{recipient_person_id}> has no points to remove in {period_label}.",
         }
 
     try:
@@ -143,11 +146,12 @@ def remove_point(recipient_person_id: str, table_name: str) -> dict:
         return {"success": False, "message": "⚠️ Something went wrong. Try again later."}
 
     new_total = int(response["Attributes"].get("points", 0))
+    date_note = f" _(from {period_label})_" if override_date else ""
     return {
         "success": True,
         "message": (
-            f"↩️ 1 point removed from <@personId:{recipient_person_id}>. "
-            f"They now have **{new_total}** point{'s' if new_total != 1 else ''} this month."
+            f"↩️ 1 point removed from <@personId:{recipient_person_id}>{date_note}. "
+            f"They now have **{new_total}** point{'s' if new_total != 1 else ''} in {period_label}."
         ),
     }
 
