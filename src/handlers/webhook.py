@@ -4,11 +4,12 @@ Validates the request came from an allowed space, parses the mention,
 and awards a point to the tagged user.
 
 Commands (all require @Pulse mention):
-  @Pulse @Name            — give 1 point (everyone)
-  @Pulse scores           — show this month's leaderboard (everyone)
-  @Pulse help             — show available commands (everyone)
-  @Pulse @Name --         — remove 1 point (admins only)
-  @Pulse @Name 2026-04-26 — give a point for a specific date (admins only)
+  @Pulse @Name              — give 1 point (everyone)
+  @Pulse @Name --           — remove 1 point for today (everyone)
+  @Pulse scores             — show this month's leaderboard (everyone)
+  @Pulse help               — show available commands (everyone)
+  @Pulse @Name -- YYYY-MM-DD — remove a point for a specific date (admins only)
+  @Pulse @Name 2026-04-26   — give a point for a specific date (admins only)
 """
 
 import json
@@ -100,20 +101,19 @@ def lambda_handler(event, context):
             )
             return _ok("no recipients")
 
-        # ── remove command: "@Pulse @Name --" or "@Pulse @Name -- 2026-03-15" (admin only)
+        # ── remove command: "@Pulse @Name --" or "@Pulse @Name -- 2026-03-15" ──
         if "--" in clean_text:
-            if not is_admin:
-                send_message(
-                    room_id,
-                    f"🚫 Only admins can remove points. Ask {_admin_mentions(config)}",
-                    config["bot_token"],
-                )
-                return _ok("unauthorised remove")
-
-            # Check if a specific date was also provided for backdated removal
-            remove_date = None
             date_match = _DATE_RE.search(clean_text)
+
+            # Backdated removal (with date) — admin only
             if date_match:
+                if not is_admin:
+                    send_message(
+                        room_id,
+                        f"🚫 Only admins can remove points for a specific date. Ask {_admin_mentions(config)}",
+                        config["bot_token"],
+                    )
+                    return _ok("unauthorised backdated remove")
                 try:
                     parsed = date.fromisoformat(date_match.group(1))
                     if parsed > date.today():
@@ -123,6 +123,9 @@ def lambda_handler(event, context):
                 except ValueError:
                     send_message(room_id, "⚠️ Invalid date format. Use YYYY-MM-DD.", config["bot_token"])
                     return _ok("invalid date")
+            else:
+                # Current-day removal — open to everyone
+                remove_date = None
 
             responses = []
             for person_id in recipients:
@@ -223,6 +226,7 @@ def _post_help(room_id: str, config: dict, is_admin: bool) -> None:
     lines = [
         "👋 **Pulse Bot Commands**\n",
         "• **@Pulse @Name** — give someone 1 point _(1 per person per day)_",
+        "• **@Pulse @Name --** — remove 1 point from someone (current day)",
         "• **@Pulse score me** — see your own score this month",
         "• **@Pulse score @Name** — see someone else's score",
         "• **@Pulse scores** — see the full leaderboard",
@@ -231,8 +235,7 @@ def _post_help(room_id: str, config: dict, is_admin: bool) -> None:
     ]
     if is_admin:
         lines.insert(-1, "\n🔧 **Admin Commands**")
-        lines.insert(-1, "• **@Pulse @Name --** — remove 1 point from someone (current month)")
-        lines.insert(-1, "• **@Pulse @Name -- 2026-03-15** — remove a point from a specific month")
+        lines.insert(-1, "• **@Pulse @Name -- 2026-03-15** — remove a point from a specific date")
         lines.insert(-1, "• **@Pulse @Name 2026-04-26** — backdate a point to a specific date")
 
     send_message(room_id, "\n".join(lines), config["bot_token"])
