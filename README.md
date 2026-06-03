@@ -36,6 +36,11 @@ DynamoDB                    ←───────────┘
     ▲
     │
 Lambda: leaderboard.py  ←── EventBridge (cron: 1st of every month, 9am UTC)
+
+CloudWatch Alarm (≥ 3 Lambda errors / 5 min)
+    │
+    ▼
+SNS Topic → 📧 Email alert
 ```
 
 **AWS Services used:**
@@ -46,7 +51,8 @@ Lambda: leaderboard.py  ←── EventBridge (cron: 1st of every month, 9am UTC
 | DynamoDB | Score storage | ~$0.00/month (on-demand, pay per use) |
 | Parameter Store | Secrets (bot token, space IDs, admins) | Free |
 | EventBridge | Monthly leaderboard schedule | Free |
-| CloudWatch | Logs | ~$0.00/month (free tier) |
+| CloudWatch | Logs + outage alarm | ~$0.00/month (free tier) |
+| SNS | Outage alert emails | Free (< 1,000 emails/month) |
 | S3 | SAM deployment artifacts | ~$0.01/month |
 | **Total** | | **< $1/month** |
 
@@ -247,6 +253,23 @@ ttl        = Number             auto-deleted after 13 months
 
 ---
 
+## Monitoring & Alerts
+
+CloudWatch monitors the webhook Lambda for errors. If the bot fails **3 or more times in a 5-minute window** (e.g. during a Webex API outage), an email alert fires automatically via SNS.
+
+| Event | What happens |
+|---|---|
+| Bot errors ≥ 3 in 5 min | Alert email sent |
+| Error rate drops to 0 | Recovery email sent — you know exactly when the bot is back |
+
+**Why email and not a Webex message?** During an outage the bot cannot reach Webex to notify you — that's the outage. Email is a separate channel that works regardless.
+
+> ⚠️ **First deploy:** AWS sends a **subscription confirmation email** to the alert address. You must click the link in that email to activate alerts. Without it, no alert emails are delivered.
+
+To check Webex service status during an outage: **[status.webex.com](https://status.webex.com)**
+
+---
+
 ## CI/CD
 
 Every push to `develop` (via PR) triggers GitHub Actions which:
@@ -254,6 +277,8 @@ Every push to `develop` (via PR) triggers GitHub Actions which:
 2. Runs `sam build`
 3. Runs `sam deploy`
 4. Prints the live webhook URL
+
+> After the **first deploy**, check your email for the SNS subscription confirmation and click the link to activate outage alerts.
 
 ---
 
