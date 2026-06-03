@@ -194,10 +194,11 @@ def _post_person_score(room_id: str, person_id: str, is_self: bool, config: dict
     """Post the current month's score for a single person."""
     month_name = today_et().strftime("%B %Y")
     name = get_display_name(person_id, config["bot_token"])
+    score = get_person_score(person_id, os.environ["SCORES_TABLE"])
     subject = "You have" if is_self else f"**{name}** has"
     send_message(
         room_id,
-        f"📊 {subject} **{points}** point{'s' if points != 1 else ''} in {month_name}.",
+        f"📊 {subject} **{score}** point{'s' if score != 1 else ''} in {month_name}.",
         config["bot_token"],
     )
 
