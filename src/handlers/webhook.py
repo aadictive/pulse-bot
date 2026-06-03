@@ -170,12 +170,14 @@ def lambda_handler(event, context):
         # ── award point(s): "@Pulse @Name" or "@Pulse @Name 2026-04-26" ──────
         responses = []
         for person_id in recipients:
+            name = get_display_name(person_id, config["bot_token"])
             result = award_point(
                 giver_person_id=sender_person_id,
                 recipient_person_id=person_id,
                 room_id=room_id,
                 table_name=os.environ["SCORES_TABLE"],
                 override_date=override_date,
+                recipient_name=name,
             )
             responses.append(result)
 

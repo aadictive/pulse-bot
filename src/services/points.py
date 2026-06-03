@@ -46,6 +46,7 @@ def award_point(
     room_id: str,
     table_name: str,
     override_date: str = None,
+    recipient_name: str = None,
 ) -> dict:
     """
     Give recipient_person_id 1 point.
@@ -53,6 +54,10 @@ def award_point(
       - A person cannot give points to themselves.
       - Only 1 point per recipient per day (checked against the dates set).
       - Admins can backdate via override_date; rejected if that date already exists.
+
+    recipient_name is informational only — stored as user_name in DynamoDB so
+    records are human-readable without cross-referencing IDs externally.
+    All business logic (deduplication, limits, leaderboard) keys off the UID.
     """
     target_date = date.fromisoformat(override_date) if override_date else today_et()
     period = target_date.strftime("%Y-%m")
@@ -83,24 +88,30 @@ def award_point(
         }
 
     try:
+        update_expr = (
+            "SET points = if_not_exists(points, :zero) + :one, "
+            "last_given = :today, "
+            "person_id = :pid, "
+            "#ttl = :ttl"
+            + (", user_name = :uname" if recipient_name else "")
+            + " ADD #dates :date_set"
+        )
+        expr_values = {
+            ":zero": 0,
+            ":one": 1,
+            ":today": target_str,
+            ":pid": recipient_person_id,
+            ":ttl": _ttl(),
+            ":date_set": {target_str},
+        }
+        if recipient_name:
+            expr_values[":uname"] = recipient_name
+
         response = table.update_item(
             Key={"pk": period, "sk": sk},
-            UpdateExpression=(
-                "SET points = if_not_exists(points, :zero) + :one, "
-                "last_given = :today, "
-                "person_id = :pid, "
-                "#ttl = :ttl "
-                "ADD #dates :date_set"
-            ),
+            UpdateExpression=update_expr,
             ExpressionAttributeNames={"#ttl": "ttl", "#dates": "dates"},
-            ExpressionAttributeValues={
-                ":zero": 0,
-                ":one": 1,
-                ":today": target_str,
-                ":pid": recipient_person_id,
-                ":ttl": _ttl(),
-                ":date_set": {target_str},
-            },
+            ExpressionAttributeValues=expr_values,
             ReturnValues="ALL_NEW",
         )
     except ClientError as exc:
