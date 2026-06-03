@@ -133,6 +133,39 @@ Resources:
                 httpMethod: POST
                 uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebhookFunction.Arn}/invocations
 
+  # ─── SNS Topic for outage email alerts ───────────────────────────────────
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub pulse-bot-alerts-${Stage}
+      Subscription:
+        - Protocol: email
+          Endpoint: asc4896@gmail.com
+
+  # ─── CloudWatch Alarm: fires when 3+ Lambda errors in 5 minutes ───────────
+  WebhookErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub pulse-bot-webhook-errors-${Stage}
+      AlarmDescription: >
+        Pulse Bot Lambda is failing (likely a Webex API outage).
+        Check status.webex.com — the bot will auto-recover when Webex is back.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WebhookFunction
+      Statistic: Sum
+      Period: 300        # 5-minute window
+      EvaluationPeriods: 1
+      Threshold: 3       # alert if 3+ errors in a single 5-min window
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic  # also email when the alarm clears (bot recovered)
+
 Outputs:
   WebhookUrl:
     Description: "Paste this URL into your Webex Bot webhook settings"
@@ -141,3 +174,7 @@ Outputs:
   ScoresTableName:
     Description: "DynamoDB table name"
     Value: !Ref ScoresTable
+
+  AlertTopicArn:
+    Description: "SNS topic ARN for outage alerts"
+    Value: !Ref AlertTopic
