@@ -12,11 +12,12 @@ A self-hosted, low-cost Webex bot that gives people points, tracks monthly score
 - 📊 View scores for yourself, someone else, or the full leaderboard
 - 🔒 1 point per person per day — enforced via a date set in DynamoDB
 - 🚫 No self-points
-- 🏆 Automatic monthly leaderboard posted on the 1st of every month
-- 🎰 Weighted raffle winner (more points = more tickets, last month's winner excluded)
-- 🔐 Only messages from approved Webex spaces are processed
+- 🏆 Automatic monthly leaderboard posted on the 1st of every month — **scoped per Webex space**
+- 🎰 Weighted raffle winner per space (more points = more tickets, last month's winner excluded)
+- 🔐 Only messages from approved Webex spaces are processed — each space sees only its own data
 - 🛡️ Admin-only commands for corrections (remove points, backdate awards)
 - 💾 All secrets stored in AWS Parameter Store — nothing sensitive in the repo
+- 👤 Display names stored in DynamoDB — no extra API calls on leaderboard display
 
 ---
 
@@ -37,7 +38,7 @@ DynamoDB                    ←───────────┘
     │
 Lambda: leaderboard.py  ←── EventBridge (cron: 1st of every month, 9am UTC)
 
-CloudWatch Alarm (≥ 3 Lambda errors / 5 min)
+CloudWatch Alarm (≥ 1 Lambda error / 5 min)
     │
     ▼
 SNS Topic → 📧 Email alert
@@ -234,32 +235,40 @@ Omit `period` to default to last month (same as the automatic run).
 
 **Score records:**
 ```
-pk         = "YYYY-MM"          partition key (month)
-sk         = "user#<personId>"  sort key
-points     = Number             total points this month
-dates      = StringSet          every date a point was received {"2026-04-01", ...}
-last_given = "YYYY-MM-DD"       most recently awarded date
-person_id  = String             Webex person ID
-ttl        = Number             auto-deleted after 13 months
+pk         = "YYYY-MM"                      partition key (month)
+sk         = "<roomId>#user#<personId>"     sort key — scoped per Webex space
+points     = Number                         total points this month
+dates      = StringSet                      every date a point was received {"2026-04-01", ...}
+last_given = "YYYY-MM-DD"                  most recently awarded date
+person_id  = String                         Webex person ID
+room_id    = String                         Webex space ID
+user_name  = String                         display name (e.g. "Aditya Chaudhari")
+space_name = String                         space title (e.g. "🎲 Monthly Challenge 🎲")
+ttl        = Number                         auto-deleted after 13 months
 ```
+
+> The same person in two different spaces creates two separate score records — scores are fully isolated per space.
 
 **Raffle winner records:**
 ```
 pk         = "raffle"
-sk         = "YYYY-MM"          the month the raffle ran
-person_id  = String             winner's Webex person ID
-ttl        = Number             auto-deleted after 13 months
+sk         = "YYYY-MM#<roomId>"            the month + space the raffle ran
+person_id  = String                         winner's Webex person ID
+user_name  = String                         winner's display name
+room_id    = String                         Webex space ID
+space_name = String                         space title
+ttl        = Number                         auto-deleted after 13 months
 ```
 
 ---
 
 ## Monitoring & Alerts
 
-CloudWatch monitors the webhook Lambda for errors. If the bot fails **3 or more times in a 5-minute window** (e.g. during a Webex API outage), an email alert fires automatically via SNS.
+CloudWatch monitors the webhook Lambda for errors. If the bot fails **1 or more times in a 5-minute window** (e.g. during a Webex API outage), an email alert fires automatically via SNS.
 
 | Event | What happens |
 |---|---|
-| Bot errors ≥ 3 in 5 min | Alert email sent |
+| Bot errors ≥ 1 in 5 min | Alert email sent |
 | Error rate drops to 0 | Recovery email sent — you know exactly when the bot is back |
 
 **Why email and not a Webex message?** During an outage the bot cannot reach Webex to notify you — that's the outage. Email is a separate channel that works regardless.
@@ -286,7 +295,9 @@ Every push to `develop` (via PR) triggers GitHub Actions which:
 
 - All secrets stored in AWS Parameter Store (SecureString / KMS encrypted) — never in the repo
 - Only messages from explicitly configured Webex space IDs are processed
+- Each command returns data scoped to the calling space only — cross-space data leakage is impossible
 - Lambda IAM role has least-privilege access (DynamoDB + SSM only)
 - SSM config is cached with a 5-minute TTL so admin list changes take effect quickly
 - DynamoDB encryption at rest enabled by default
+- `develop` branch is protected — all changes require a PR (no direct pushes, admins included)
 
