@@ -21,7 +21,7 @@ from datetime import date
 from services.config import get_config
 from services.points import award_point, get_monthly_scores, get_person_score, remove_point
 from services.utils import today_et
-from services.webex import get_display_name, get_message_details, send_message, send_message_once
+from services.webex import get_display_name, get_message_details, get_room_name, send_message, send_message_once
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
@@ -50,6 +50,9 @@ def lambda_handler(event, context):
         if room_id not in allowed_spaces:
             logger.warning("Message from unauthorised space: %s", room_id)
             return _ok("space not allowed")  # return 200 so Webex stops retrying
+
+        # Resolve space name once — passed to award_point for DynamoDB storage
+        space_name = get_room_name(room_id, config["bot_token"])
 
         # ── Fetch full message text (webhook payload only has metadata) ───────
         message = get_message_details(message_id, config["bot_token"])
@@ -91,7 +94,6 @@ def lambda_handler(event, context):
         if re.search(r"\bscores\b", clean_text, re.IGNORECASE):
             _post_scores(room_id, config)
             return _ok("scores posted")
-
         # ── help command: "@Pulse help" ───────────────────────────────────────
         if re.search(r"\bhelp\b", clean_text, re.IGNORECASE):
             _post_help(room_id, config, is_admin)
@@ -139,6 +141,7 @@ def lambda_handler(event, context):
             for person_id in recipients:
                 result = remove_point(
                     recipient_person_id=person_id,
+                    room_id=room_id,
                     table_name=os.environ["SCORES_TABLE"],
                     override_date=remove_date,
                 )
@@ -178,6 +181,7 @@ def lambda_handler(event, context):
                 table_name=os.environ["SCORES_TABLE"],
                 override_date=override_date,
                 recipient_name=name,
+                space_name=space_name,
             )
             responses.append(result)
 
@@ -191,16 +195,20 @@ def lambda_handler(event, context):
 
 
 def _post_person_score(room_id: str, person_id: str, is_self: bool, config: dict) -> None:
-    """Post the current month's score for a single person."""
-    month_name = today_et().strftime("%B %Y")
-    name = get_display_name(person_id, config["bot_token"])
-    score = get_person_score(person_id, os.environ["SCORES_TABLE"])
-    subject = "You have" if is_self else f"**{name}** has"
-    send_message(
-        room_id,
-        f"📊 {subject} **{score}** point{'s' if score != 1 else ''} in {month_name}.",
-        config["bot_token"],
-    )
+    """Post the current month's score for a single person in the calling space."""
+    try:
+        month_name = today_et().strftime("%B %Y")
+        name = get_display_name(person_id, config["bot_token"])
+        score = get_person_score(person_id, room_id, os.environ["SCORES_TABLE"])
+        subject = "You have" if is_self else f"**{name}** has"
+        send_message(
+            room_id,
+            f"📊 {subject} **{score}** point{'s' if score != 1 else ''} in {month_name}.",
+            config["bot_token"],
+        )
+    except Exception as exc:
+        logger.exception("Error in _post_person_score: %s", exc)
+        send_message(room_id, "⚠️ Something went wrong fetching that score. Try again in a moment.", config["bot_token"])
 
 
 def _admin_mentions(config: dict) -> str:
@@ -211,24 +219,28 @@ def _admin_mentions(config: dict) -> str:
 
 
 def _post_scores(room_id: str, config: dict) -> None:
-    """Fetch current month's scores and post a mini leaderboard to the space."""
-    period = today_et().strftime("%Y-%m")
-    month_name = today_et().strftime("%B %Y")
-    scores = get_monthly_scores(period, os.environ["SCORES_TABLE"])
+    """Fetch current month's scores for this space and post a mini leaderboard."""
+    try:
+        period = today_et().strftime("%Y-%m")
+        month_name = today_et().strftime("%B %Y")
+        scores = get_monthly_scores(period, room_id, os.environ["SCORES_TABLE"])
 
-    if not scores:
-        send_message(room_id, f"📊 No points awarded yet in {month_name}!", config["bot_token"])
-        return
+        if not scores:
+            send_message(room_id, f"📊 No points awarded yet in {month_name}!", config["bot_token"])
+            return
 
-    scores.sort(key=lambda x: x["points"], reverse=True)
-    medals = ["🥇", "🥈", "🥉"]
-    lines = [f"📊 **Pulse Scores — {month_name}**\n"]
-    for i, entry in enumerate(scores):
-        name = get_display_name(entry["person_id"], config["bot_token"])
-        medal = medals[i] if i < 3 else f"{i + 1}."
-        lines.append(f"{medal} **{name}** — {entry['points']} point{'s' if entry['points'] != 1 else ''}")
+        scores.sort(key=lambda x: x["points"], reverse=True)
+        medals = ["🥇", "🥈", "🥉"]
+        lines = [f"📊 **Pulse Scores — {month_name}**\n"]
+        for i, entry in enumerate(scores):
+            name = entry.get("user_name") or get_display_name(entry["person_id"], config["bot_token"])
+            medal = medals[i] if i < 3 else f"{i + 1}."
+            lines.append(f"{medal} **{name}** — {entry['points']} point{'s' if entry['points'] != 1 else ''}")
 
-    send_message(room_id, "\n".join(lines), config["bot_token"])
+        send_message(room_id, "\n".join(lines), config["bot_token"])
+    except Exception as exc:
+        logger.exception("Error in _post_scores: %s", exc)
+        send_message(room_id, "⚠️ Something went wrong fetching the leaderboard. Try again in a moment.", config["bot_token"])
 
 
 def _post_help(room_id: str, config: dict, is_admin: bool) -> None:
