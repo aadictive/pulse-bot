@@ -5,6 +5,9 @@ on:
     branches:
       - develop   # auto-deploy on every push to develop
 
+permissions:
+  contents: read
+
 env:
   AWS_REGION: us-east-1
   SAM_STACK_NAME: pulse-bot-dev
