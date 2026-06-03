@@ -21,8 +21,13 @@ python scripts/migrate_room_ids.py --table pulse-bot-scores --token <WEBEX_TOKEN
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from typing import Optional
+
+# Force UTF-8 output on Windows so emoji in room names don't crash
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 import boto3
 import requests
