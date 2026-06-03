@@ -1,14 +1,31 @@
 """
 Webex API service — thin wrapper around the Webex REST API.
+All calls retry up to 3 times with exponential back-off on transient
+errors (503, 429, timeouts) before giving up.
 """
 
 import logging
+import time
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
 WEBEX_API = "https://webexapis.com/v1"
+
+# Retry up to 3 times on 429/503/504 with exponential back-off (1s, 2s, 4s)
+_RETRY = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 503, 504],
+    allowed_methods=["GET", "POST"],
+    raise_on_status=False,
+)
+_ADAPTER = HTTPAdapter(max_retries=_RETRY)
+_SESSION = requests.Session()
+_SESSION.mount("https://", _ADAPTER)
 
 
 def _headers(token: str) -> dict:
@@ -18,7 +35,7 @@ def _headers(token: str) -> dict:
 def get_message_details(message_id: str, token: str) -> dict | None:
     """Fetch the full message object (webhook payload only has metadata)."""
     try:
-        resp = requests.get(
+        resp = _SESSION.get(
             f"{WEBEX_API}/messages/{message_id}",
             headers=_headers(token),
             timeout=10,
@@ -33,7 +50,7 @@ def get_message_details(message_id: str, token: str) -> dict | None:
 def send_message(room_id: str, text: str, token: str) -> bool:
     """Post a markdown message to a Webex space."""
     try:
-        resp = requests.post(
+        resp = _SESSION.post(
             f"{WEBEX_API}/messages",
             headers=_headers(token),
             json={"roomId": room_id, "markdown": text},
@@ -49,7 +66,7 @@ def send_message(room_id: str, text: str, token: str) -> bool:
 def get_display_name(person_id: str, token: str) -> str:
     """Look up a person's display name by their Webex person ID."""
     try:
-        resp = requests.get(
+        resp = _SESSION.get(
             f"{WEBEX_API}/people/{person_id}",
             headers=_headers(token),
             timeout=10,
