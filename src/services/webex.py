@@ -2,9 +2,20 @@
 Webex API service — thin wrapper around the Webex REST API.
 
 Two sessions are maintained:
-- _SESSION  : retries up to 3 times with exponential back-off (for normal calls)
+- _SESSION  : retries on HTTP error status codes (503, 429, 504) but NOT on
+              connection failures — failing fast on connect errors means Lambda
+              still has budget to send a fallback notification.
 - _DIRECT_SESSION : single attempt, no retries (for best-effort fallback messages
-                    after the retry budget has already been spent)
+                    after the main call has already failed)
+
+Why connect=0?
+  During a Webex outage each TCP/SSL connection attempt takes ~30s at the OS
+  level regardless of the per-request timeout setting. With 3 retries that
+  would be 4 × 30s = 120s — exactly the Lambda timeout — and the fallback
+  message never sends. Setting connect=0 means we give up after one attempt
+  (~30s), leaving ~90s for the fallback notification and a clean return.
+  Status-code retries (503/429) are unaffected because those require a
+  successful connection first.
 """
 
 import logging
@@ -17,11 +28,13 @@ logger = logging.getLogger(__name__)
 
 WEBEX_API = "https://webexapis.com/v1"
 
-# Retry up to 3 times on 429/503/504 with exponential back-off (1s, 2s, 4s).
-# Per-request timeout is 10 s; worst-case budget: 4×10s + 7s backoff ≈ 47 s.
-# Lambda timeout must remain above this (currently 120 s).
+# Status-code retries only — do NOT retry connection failures.
+# connect=0  → fail immediately on ConnectTimeoutError / connection refused
+# total=3    → up to 3 retries when we get a 429/503/504 HTTP response
+# Worst-case with a status retry: 4 attempts × 10s + (1+2+4)s backoff ≈ 47s
 _RETRY = Retry(
     total=3,
+    connect=0,          # ← fail fast on connection errors (outage scenario)
     backoff_factor=1,
     status_forcelist=[429, 503, 504],
     allowed_methods=["GET", "POST"],
