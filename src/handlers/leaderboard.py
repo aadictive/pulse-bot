@@ -47,7 +47,7 @@ def lambda_handler(event, context):
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"🏆 **Pulse Leaderboard — {month_name}**\n"]
     for i, entry in enumerate(scores):
-        name = get_display_name(entry["person_id"], config["bot_token"])
+        name = entry.get("user_name") or get_display_name(entry["person_id"], config["bot_token"])
         medal = medals[i] if i < 3 else f"{i + 1}."
         lines.append(f"{medal} **{name}** — {entry['points']} point{'s' if entry['points'] != 1 else ''}")
 
@@ -66,7 +66,7 @@ def lambda_handler(event, context):
 
     winner_id = random.choice(pool)
     winner_name = get_display_name(winner_id, config["bot_token"])
-    save_raffle_winner(winner_id, period, os.environ["SCORES_TABLE"])
+    save_raffle_winner(winner_id, period, os.environ["SCORES_TABLE"], winner_name=winner_name)
 
     if last_winner_id and last_winner_id != winner_id:
         pass  # exclusion is silent — logic still applies, no public announcement
