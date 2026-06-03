@@ -53,6 +53,12 @@ def lambda_handler(event, context):
         # ── Fetch full message text (webhook payload only has metadata) ───────
         message = get_message_details(message_id, config["bot_token"])
         if not message:
+            send_message(
+                room_id,
+                "⚠️ I received your message but couldn't read it due to a temporary Webex API issue. "
+                "Please try again in a moment!",
+                config["bot_token"],
+            )
             return _ok("could not fetch message")
 
         text = message.get("text", "")

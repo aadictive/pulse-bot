@@ -38,7 +38,7 @@ def get_message_details(message_id: str, token: str) -> dict | None:
         resp = _SESSION.get(
             f"{WEBEX_API}/messages/{message_id}",
             headers=_headers(token),
-            timeout=10,
+            timeout=5,
         )
         resp.raise_for_status()
         return resp.json()
@@ -54,7 +54,7 @@ def send_message(room_id: str, text: str, token: str) -> bool:
             f"{WEBEX_API}/messages",
             headers=_headers(token),
             json={"roomId": room_id, "markdown": text},
-            timeout=10,
+            timeout=5,
         )
         resp.raise_for_status()
         return True
@@ -69,7 +69,7 @@ def get_display_name(person_id: str, token: str) -> str:
         resp = _SESSION.get(
             f"{WEBEX_API}/people/{person_id}",
             headers=_headers(token),
-            timeout=10,
+            timeout=5,
         )
         resp.raise_for_status()
         data = resp.json()
