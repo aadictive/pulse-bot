@@ -118,3 +118,18 @@ def get_display_name(person_id: str, token: str) -> str:
     except Exception as exc:
         logger.exception("Failed to get display name for %s: %s", person_id, exc)
         return person_id   # fallback to raw ID
+
+
+def get_room_name(room_id: str, token: str) -> str:
+    """Look up a Webex space's display title by its room ID."""
+    try:
+        resp = _SESSION.get(
+            f"{WEBEX_API}/rooms/{room_id}",
+            headers=_headers(token),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json().get("title", room_id)
+    except Exception as exc:
+        logger.exception("Failed to get room name for %s: %s", room_id, exc)
+        return room_id   # fallback to raw ID

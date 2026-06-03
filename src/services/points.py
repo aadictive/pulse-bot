@@ -2,24 +2,31 @@
 Points service — reads and writes scores to DynamoDB.
 
 Table schema (score records):
-  pk         = "YYYY-MM"           (partition key — the month)
-  sk         = "user#<personId>"   (sort key)
-  points     = int                 (total points this month)
-  dates      = StringSet           (every date a point was received e.g. {"2026-04-01","2026-04-03"})
-  last_given = "YYYY-MM-DD"        (most recent date — used for no-date removes)
-  person_id  = str
-  ttl        = int                 (epoch — auto-delete after 13 months)
+  pk         = "YYYY-MM"                       (partition key — the month)
+  sk         = "<roomId>#user#<personId>"       (sort key — space-scoped per user)
+  points     = int                              (total points this month)
+  dates      = StringSet                        (every date a point was received)
+  last_given = "YYYY-MM-DD"                    (most recent date — used for no-date removes)
+  person_id  = str                              (Webex person ID)
+  room_id    = str                              (Webex room/space ID)
+  user_name  = str  (optional)                 (display name — informational, set by award_point)
+  space_name = str  (optional)                 (space title — informational, set by award_point)
+  ttl        = int                              (epoch — auto-delete after 13 months)
 
 Raffle winner records:
   pk         = "raffle"
-  sk         = "YYYY-MM"           (the month the raffle was run)
-  person_id  = str                 (winner person ID)
+  sk         = "YYYY-MM#<roomId>"              (month + space — one winner per space per month)
+  person_id  = str                              (winner person ID)
+  room_id    = str
+  user_name  = str  (optional)
+  space_name = str  (optional)
 """
 
 import logging
 import os
 import time
 from datetime import date
+from typing import Optional
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -47,17 +54,18 @@ def award_point(
     table_name: str,
     override_date: str = None,
     recipient_name: str = None,
+    space_name: str = None,
 ) -> dict:
     """
-    Give recipient_person_id 1 point.
+    Give recipient_person_id 1 point in the given room (space).
     Rules:
       - A person cannot give points to themselves.
-      - Only 1 point per recipient per day (checked against the dates set).
+      - Only 1 point per recipient per day per space (checked against the dates set).
       - Admins can backdate via override_date; rejected if that date already exists.
 
-    recipient_name is informational only — stored as user_name in DynamoDB so
+    recipient_name and space_name are informational only — stored in DynamoDB so
     records are human-readable without cross-referencing IDs externally.
-    All business logic (deduplication, limits, leaderboard) keys off the UID.
+    All business logic (deduplication, limits, leaderboard) keys off the UID and room_id.
     """
     target_date = date.fromisoformat(override_date) if override_date else today_et()
     period = target_date.strftime("%Y-%m")
@@ -67,7 +75,7 @@ def award_point(
         return {"success": False, "message": "You can not give yourself a point, cheeky!"}
 
     table = _table(table_name)
-    sk = f"user#{recipient_person_id}"
+    sk = f"{room_id}#user#{recipient_person_id}"
 
     try:
         existing = table.get_item(Key={"pk": period, "sk": sk}).get("Item")
@@ -88,12 +96,14 @@ def award_point(
         }
 
     try:
-        update_expr = (
+        set_clause = (
             "SET points = if_not_exists(points, :zero) + :one, "
             "last_given = :today, "
             "person_id = :pid, "
+            "room_id = :rid, "
             "#ttl = :ttl"
             + (", user_name = :uname" if recipient_name else "")
+            + (", space_name = :sname" if space_name else "")
             + " ADD #dates :date_set"
         )
         expr_values = {
@@ -101,15 +111,18 @@ def award_point(
             ":one": 1,
             ":today": target_str,
             ":pid": recipient_person_id,
+            ":rid": room_id,
             ":ttl": _ttl(),
             ":date_set": {target_str},
         }
         if recipient_name:
             expr_values[":uname"] = recipient_name
+        if space_name:
+            expr_values[":sname"] = space_name
 
         response = table.update_item(
             Key={"pk": period, "sk": sk},
-            UpdateExpression=update_expr,
+            UpdateExpression=set_clause,
             ExpressionAttributeNames={"#ttl": "ttl", "#dates": "dates"},
             ExpressionAttributeValues=expr_values,
             ReturnValues="ALL_NEW",
@@ -129,15 +142,15 @@ def award_point(
     }
 
 
-def remove_point(recipient_person_id: str, table_name: str, override_date: str = None) -> dict:
+def remove_point(recipient_person_id: str, room_id: str, table_name: str, override_date: str = None) -> dict:
     """
-    Remove 1 point from recipient. Admin-only.
+    Remove 1 point from recipient in the given space. Admin-only.
     - With override_date: removes that specific date from the dates set.
       Rejected if that date was never awarded.
     - Without override_date: removes the most recently awarded date (last_given).
     """
     table = _table(table_name)
-    sk = f"user#{recipient_person_id}"
+    sk = f"{room_id}#user#{recipient_person_id}"
 
     if override_date:
         target_date = date.fromisoformat(override_date)
@@ -211,11 +224,11 @@ def remove_point(recipient_person_id: str, table_name: str, override_date: str =
     }
 
 
-def get_person_score(person_id: str, table_name: str) -> int:
-    """Return the current month's point total for a single person. Returns 0 if not found."""
+def get_person_score(person_id: str, room_id: str, table_name: str) -> int:
+    """Return the current month's point total for a single person in a given space. Returns 0 if not found."""
     period = today_et().strftime("%Y-%m")
     table = _table(table_name)
-    sk = f"user#{person_id}"
+    sk = f"{room_id}#user#{person_id}"
     try:
         item = table.get_item(Key={"pk": period, "sk": sk}).get("Item")
         return int(item.get("points", 0)) if item else 0
@@ -224,46 +237,58 @@ def get_person_score(person_id: str, table_name: str) -> int:
         return 0
 
 
-def get_monthly_scores(period: str, table_name: str) -> list:
-    """Return all scores for a given month period. Returns [{ person_id, points }, ...]"""
+def get_monthly_scores(period: str, room_id: str, table_name: str) -> list:
+    """Return all scores for a given month and space. Returns [{ person_id, points, user_name, space_name }, ...]"""
     table = _table(table_name)
     try:
-        response = table.query(KeyConditionExpression=Key("pk").eq(period))
+        response = table.query(
+            KeyConditionExpression=Key("pk").eq(period) & Key("sk").begins_with(f"{room_id}#user#")
+        )
     except ClientError as exc:
         logger.exception("DynamoDB query failed: %s", exc)
         return []
 
     return [
         {
-            "person_id": item.get("person_id", item["sk"].replace("user#", "")),
+            "person_id": item.get("person_id", item["sk"].split("#user#")[-1]),
             "points": int(item.get("points", 0)),
             "user_name": item.get("user_name"),
+            "space_name": item.get("space_name"),
         }
         for item in response.get("Items", [])
-        if item["sk"].startswith("user#")
+        if "#user#" in item["sk"]
     ]
 
 
-def get_last_raffle_winner(table_name: str) -> str | None:
-    """Return last month's raffle winner person_id, or None."""
+def get_last_raffle_winner(table_name: str, room_id: str) -> Optional[str]:
+    """Return last month's raffle winner person_id for a given space, or None."""
     today = today_et()
     year, month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
     period = f"{year}-{month:02d}"
+    sk = f"{period}#{room_id}"
     table = _table(table_name)
     try:
-        item = table.get_item(Key={"pk": "raffle", "sk": period}).get("Item")
+        item = table.get_item(Key={"pk": "raffle", "sk": sk}).get("Item")
         return item.get("person_id") if item else None
     except ClientError as exc:
         logger.exception("DynamoDB get_item failed: %s", exc)
         return None
 
 
-def save_raffle_winner(person_id: str, period: str, table_name: str, winner_name: str = None) -> None:
-    """Persist the raffle winner for a given month period."""
+def save_raffle_winner(person_id: str, period: str, room_id: str, table_name: str, winner_name: str = None, space_name: str = None) -> None:
+    """Persist the raffle winner for a given month and space."""
     table = _table(table_name)
-    item = {"pk": "raffle", "sk": period, "person_id": person_id, "ttl": _ttl()}
+    item = {
+        "pk": "raffle",
+        "sk": f"{period}#{room_id}",
+        "person_id": person_id,
+        "room_id": room_id,
+        "ttl": _ttl(),
+    }
     if winner_name:
         item["user_name"] = winner_name
+    if space_name:
+        item["space_name"] = space_name
     try:
         table.put_item(Item=item)
     except ClientError as exc:
