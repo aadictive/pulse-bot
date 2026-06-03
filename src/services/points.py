@@ -237,6 +237,7 @@ def get_monthly_scores(period: str, table_name: str) -> list:
         {
             "person_id": item.get("person_id", item["sk"].replace("user#", "")),
             "points": int(item.get("points", 0)),
+            "user_name": item.get("user_name"),
         }
         for item in response.get("Items", [])
         if item["sk"].startswith("user#")
@@ -257,10 +258,13 @@ def get_last_raffle_winner(table_name: str) -> str | None:
         return None
 
 
-def save_raffle_winner(person_id: str, period: str, table_name: str) -> None:
+def save_raffle_winner(person_id: str, period: str, table_name: str, winner_name: str = None) -> None:
     """Persist the raffle winner for a given month period."""
     table = _table(table_name)
+    item = {"pk": "raffle", "sk": period, "person_id": person_id, "ttl": _ttl()}
+    if winner_name:
+        item["user_name"] = winner_name
     try:
-        table.put_item(Item={"pk": "raffle", "sk": period, "person_id": person_id, "ttl": _ttl()})
+        table.put_item(Item=item)
     except ClientError as exc:
         logger.exception("Failed to save raffle winner: %s", exc)

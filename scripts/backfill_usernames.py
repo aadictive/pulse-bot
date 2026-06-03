@@ -28,6 +28,7 @@ Prerequisites:
 
 import argparse
 import time
+from typing import Optional
 
 import boto3
 import requests
@@ -36,7 +37,7 @@ import requests
 WEBEX_API = "https://webexapis.com/v1"
 
 
-def resolve_display_name(person_id: str, token: str) -> str | None:
+def resolve_display_name(person_id: str, token: str) -> Optional[str]:
     """Call GET /people/{personId} and return displayName, or None on failure."""
     try:
         resp = requests.get(
