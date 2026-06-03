@@ -158,7 +158,7 @@ Resources:
       Statistic: Sum
       Period: 300        # 5-minute window
       EvaluationPeriods: 1
-      Threshold: 3       # alert if 3+ errors in a single 5-min window
+      Threshold: 1       # alert on any Lambda error (low-traffic bot)
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
