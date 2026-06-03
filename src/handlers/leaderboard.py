@@ -7,10 +7,10 @@ Fetches last month scores, posts leaderboard, picks a weighted raffle winner
 import logging
 import os
 import random
-from datetime import date
 
 from services.config import get_config
 from services.points import get_last_raffle_winner, get_monthly_scores, save_raffle_winner
+from services.utils import today_et
 from services.webex import get_display_name, send_message
 
 logger = logging.getLogger()
@@ -20,7 +20,7 @@ logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 def lambda_handler(event, context):
     config = get_config()
 
-    today = date.today()
+    today = today_et()
     year, month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
     default_period = f"{year}-{month:02d}"
 
