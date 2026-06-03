@@ -4,7 +4,7 @@ Description: Pulse Bot - Webex points tracking bot
 
 Globals:
   Function:
-    Timeout: 60
+    Timeout: 120
     MemorySize: 256
     Runtime: python3.12
     Environment:
