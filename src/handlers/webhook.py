@@ -20,7 +20,7 @@ from datetime import date, datetime
 
 from services.config import get_config
 from services.points import award_point, get_monthly_scores, get_person_score, remove_point
-from services.webex import get_display_name, get_message_details, send_message
+from services.webex import get_display_name, get_message_details, send_message, send_message_once
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
@@ -53,10 +53,11 @@ def lambda_handler(event, context):
         # ── Fetch full message text (webhook payload only has metadata) ───────
         message = get_message_details(message_id, config["bot_token"])
         if not message:
-            send_message(
+            send_message_once(
                 room_id,
-                "⚠️ I received your message but couldn't read it due to a temporary Webex API issue. "
-                "Please try again in a moment!",
+                "⚠️ I received your message but couldn't read it — Webex API is not responding after multiple retries.\n\n"
+                "This is usually caused by a Webex service outage. Please check **[status.webex.com](https://status.webex.com)** "
+                "for any active incidents, then try again once services recover.",
                 config["bot_token"],
             )
             return _ok("could not fetch message")

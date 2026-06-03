@@ -1,11 +1,13 @@
 """
 Webex API service — thin wrapper around the Webex REST API.
-All calls retry up to 3 times with exponential back-off on transient
-errors (503, 429, timeouts) before giving up.
+
+Two sessions are maintained:
+- _SESSION  : retries up to 3 times with exponential back-off (for normal calls)
+- _DIRECT_SESSION : single attempt, no retries (for best-effort fallback messages
+                    after the retry budget has already been spent)
 """
 
 import logging
-import time
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -15,7 +17,9 @@ logger = logging.getLogger(__name__)
 
 WEBEX_API = "https://webexapis.com/v1"
 
-# Retry up to 3 times on 429/503/504 with exponential back-off (1s, 2s, 4s)
+# Retry up to 3 times on 429/503/504 with exponential back-off (1s, 2s, 4s).
+# Per-request timeout is 10 s; worst-case budget: 4×10s + 7s backoff ≈ 47 s.
+# Lambda timeout must remain above this (currently 120 s).
 _RETRY = Retry(
     total=3,
     backoff_factor=1,
@@ -26,6 +30,10 @@ _RETRY = Retry(
 _ADAPTER = HTTPAdapter(max_retries=_RETRY)
 _SESSION = requests.Session()
 _SESSION.mount("https://", _ADAPTER)
+
+# No retry adapter — used only for one-shot fallback messages so we don't burn
+# the remaining Lambda budget on a second full retry cycle.
+_DIRECT_SESSION = requests.Session()
 
 
 def _headers(token: str) -> dict:
@@ -38,7 +46,7 @@ def get_message_details(message_id: str, token: str) -> dict | None:
         resp = _SESSION.get(
             f"{WEBEX_API}/messages/{message_id}",
             headers=_headers(token),
-            timeout=5,
+            timeout=10,
         )
         resp.raise_for_status()
         return resp.json()
@@ -48,18 +56,38 @@ def get_message_details(message_id: str, token: str) -> dict | None:
 
 
 def send_message(room_id: str, text: str, token: str) -> bool:
-    """Post a markdown message to a Webex space."""
+    """Post a markdown message to a Webex space (with retry on transient errors)."""
     try:
         resp = _SESSION.post(
             f"{WEBEX_API}/messages",
             headers=_headers(token),
             json={"roomId": room_id, "markdown": text},
-            timeout=5,
+            timeout=10,
         )
         resp.raise_for_status()
         return True
     except Exception as exc:
         logger.exception("Failed to send message to room %s: %s", room_id, exc)
+        return False
+
+
+def send_message_once(room_id: str, text: str, token: str) -> bool:
+    """Post a markdown message — single attempt, no retries.
+
+    Use this for best-effort fallback notifications (e.g. after get_message_details
+    has already exhausted its retry budget) so Lambda still has time to return.
+    """
+    try:
+        resp = _DIRECT_SESSION.post(
+            f"{WEBEX_API}/messages",
+            headers=_headers(token),
+            json={"roomId": room_id, "markdown": text},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.exception("Fallback send_message failed for room %s: %s", room_id, exc)
         return False
 
 
@@ -69,7 +97,7 @@ def get_display_name(person_id: str, token: str) -> str:
         resp = _SESSION.get(
             f"{WEBEX_API}/people/{person_id}",
             headers=_headers(token),
-            timeout=5,
+            timeout=10,
         )
         resp.raise_for_status()
         data = resp.json()
