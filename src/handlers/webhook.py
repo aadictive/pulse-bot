@@ -16,10 +16,11 @@ import json
 import logging
 import os
 import re
-from datetime import date, datetime
+from datetime import date
 
 from services.config import get_config
 from services.points import award_point, get_monthly_scores, get_person_score, remove_point
+from services.utils import today_et
 from services.webex import get_display_name, get_message_details, send_message, send_message_once
 
 logger = logging.getLogger()
@@ -123,7 +124,7 @@ def lambda_handler(event, context):
                     return _ok("unauthorised backdated remove")
                 try:
                     parsed = date.fromisoformat(date_match.group(1))
-                    if parsed > date.today():
+                    if parsed > today_et():
                         send_message(room_id, "🚫 Cannot remove points for a future date.", config["bot_token"])
                         return _ok("future date rejected")
                     remove_date = parsed.isoformat()
@@ -158,7 +159,7 @@ def lambda_handler(event, context):
                 return _ok("unauthorised backdate")
             try:
                 parsed = date.fromisoformat(date_match.group(1))
-                if parsed > date.today():
+                if parsed > today_et():
                     send_message(room_id, "🚫 Cannot award points for a future date.", config["bot_token"])
                     return _ok("future date rejected")
                 override_date = parsed.isoformat()
@@ -189,8 +190,7 @@ def lambda_handler(event, context):
 
 def _post_person_score(room_id: str, person_id: str, is_self: bool, config: dict) -> None:
     """Post the current month's score for a single person."""
-    month_name = date.today().strftime("%B %Y")
-    points = get_person_score(person_id, os.environ["SCORES_TABLE"])
+    month_name = today_et().strftime("%B %Y")
     name = get_display_name(person_id, config["bot_token"])
     subject = "You have" if is_self else f"**{name}** has"
     send_message(
@@ -209,8 +209,8 @@ def _admin_mentions(config: dict) -> str:
 
 def _post_scores(room_id: str, config: dict) -> None:
     """Fetch current month's scores and post a mini leaderboard to the space."""
-    period = date.today().strftime("%Y-%m")
-    month_name = date.today().strftime("%B %Y")
+    period = today_et().strftime("%Y-%m")
+    month_name = today_et().strftime("%B %Y")
     scores = get_monthly_scores(period, os.environ["SCORES_TABLE"])
 
     if not scores:

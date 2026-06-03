@@ -25,6 +25,8 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from services.utils import today_et
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +54,7 @@ def award_point(
       - Only 1 point per recipient per day (checked against the dates set).
       - Admins can backdate via override_date; rejected if that date already exists.
     """
-    target_date = date.fromisoformat(override_date) if override_date else date.today()
+    target_date = date.fromisoformat(override_date) if override_date else today_et()
     period = target_date.strftime("%Y-%m")
     target_str = target_date.isoformat()
 
@@ -132,8 +134,8 @@ def remove_point(recipient_person_id: str, table_name: str, override_date: str =
         period_label = target_date.strftime("%B %Y")
         target_str = override_date
     else:
-        period = date.today().strftime("%Y-%m")
-        period_label = date.today().strftime("%B %Y")
+        period = today_et().strftime("%Y-%m")
+        period_label = today_et().strftime("%B %Y")
         target_str = None
 
     try:
@@ -200,10 +202,7 @@ def remove_point(recipient_person_id: str, table_name: str, override_date: str =
 
 def get_person_score(person_id: str, table_name: str) -> int:
     """Return the current month's point total for a single person. Returns 0 if not found."""
-    period = date.today().strftime("%Y-%m")
-    table = _table(table_name)
-    try:
-        item = table.get_item(Key={"pk": period, "sk": f"user#{person_id}"}).get("Item")
+    period = today_et().strftime("%Y-%m")
         return int(item.get("points", 0)) if item else 0
     except ClientError as exc:
         logger.exception("DynamoDB get_item failed: %s", exc)
@@ -231,7 +230,7 @@ def get_monthly_scores(period: str, table_name: str) -> list:
 
 def get_last_raffle_winner(table_name: str) -> str | None:
     """Return last month's raffle winner person_id, or None."""
-    today = date.today()
+    today = today_et()
     year, month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
     period = f"{year}-{month:02d}"
     table = _table(table_name)
